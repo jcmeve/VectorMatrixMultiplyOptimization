@@ -213,6 +213,68 @@ public:
 };
 
 
+// 4.행 Simd + OoO최적화 + fmadd활용)
+template <size_t T>
+class alignas(64) RowMatrixSimdOoO2 {
+public:
+    alignas(64) float matrix[T][T];
+public:
+    void* operator new(size_t size) {
+        return _aligned_malloc(size, 64);
+    }
+    void operator delete(void* p) {
+        _aligned_free(p);
+    }
+    RowMatrixSimdOoO2() {
+        for (int i = 0; i < T; i++) {
+            for (int j = 0; j < T; j++) {
+                matrix[i][j] = (float)dis(gen);
+            }
+        }
+    }
+    myVec<T> operator *(myVec<T> rhs) {
+        myVec<T> result;
+        const float* m_ptr = &matrix[0][0];
+        vector<__m128> loadedRhs(T / 4);
+        for (int j = 0; j < T / 4; ++j) {
+            loadedRhs[j] = _mm_load_ps(&rhs.vec[j * 4]);
+        }
+        for (int i = 0; i < T; i++) {
+            float sum = 0;
+            const float* row = m_ptr + (i * T);
+            __m128 result1 = _mm_setzero_ps();
+            __m128 result2 = _mm_setzero_ps();
+            __m128 result3 = _mm_setzero_ps();
+            __m128 result4 = _mm_setzero_ps();
+            for (int j = 0; j < T / 4; j += 4) {
+                __m128 a = _mm_load_ps(&row[j * 4]);
+                result1 = _mm_fmadd_ps(loadedRhs[j], a, result1);
+
+                __m128 b = _mm_load_ps(&row[(j + 1) * 4]);
+                result2 = _mm_fmadd_ps(loadedRhs[j + 1], b, result2);
+
+                __m128 c = _mm_load_ps(&row[(j + 2) * 4]);
+                result3 = _mm_fmadd_ps(loadedRhs[j + 2], c, result3);
+
+                __m128 d = _mm_load_ps(&row[(j + 3) * 4]);
+                result4 = _mm_fmadd_ps(loadedRhs[j + 3], d, result4);
+            }
+
+            __m128 result5 = _mm_add_ps(result1, result2);
+            __m128 result6 = _mm_add_ps(result3, result4);
+            __m128 result7 = _mm_add_ps(result5, result6);
+
+            __m128 totalResult = _mm_hadd_ps(result7, result7);
+
+            float alignas(64) s[4] = { 0.0f,0.0f ,0.0f ,0.0f };
+            _mm_store_ps(s, totalResult);
+            sum = (s[0] + s[1]);
+
+            result.vec[i] = sum;
+        }
+        return result;
+    }
+};
 
 // 5. 열 우선 (Single Sum)
 template <size_t T>
@@ -347,6 +409,17 @@ int main() {
     end = clock();
     delete temp_ra3;
     std::cout << "행 SimdOoO  " << NUM2 << " *" << NUM2 << " 행렬 x " << NUM2 << "벡터 " << TIMES2 << "회  " << end - start << "ms" << std::endl;
+    std::cout << "최종 결과 확인: " << vec2.vec[0] << std::endl;
+
+
+    // 4. Row SImd OoO
+    for (int i = 0; i < NUM2; i++) { vec2.vec[i] = (float)i; }
+    RowMatrixSimdOoO2<NUM2>* temp_ra4 = new RowMatrixSimdOoO2<NUM2>();
+    start = clock();
+    for (int i = 0; i < TIMES2; i++) { vec2 = (*temp_ra4) * vec2; }
+    end = clock();
+    delete temp_ra4;
+    std::cout << "행 SimdOoO2  " << NUM2 << " *" << NUM2 << " 행렬 x " << NUM2 << "벡터 " << TIMES2 << "회  " << end - start << "ms" << std::endl;
     std::cout << "최종 결과 확인: " << vec2.vec[0] << std::endl;
 
     // 5. Col Single
